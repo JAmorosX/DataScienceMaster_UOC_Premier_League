@@ -1,0 +1,259 @@
+---
+title: "Premier League"
+author: "Jaume Amorós"
+date: "January 2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, echo=F, include=F}
+#install.packages("dplyr")
+#install.packages("car")
+require(dplyr)
+require(car)
+```
+
+
+#Pràctica 2: Neteja i anàlisi de dades
+
+##Introducció
+
+En aquesta pràctica s'analitzarà les dades disponibles a [Kaggle](https://www.kaggle.com) sobre [resultats de partits de la Premier League](https://www.kaggle.com/zaeemnalla/premier-league) de futbol anglesa de les temporades des de 06-07 a 17-18.
+
+
+###Objectiu
+
+L'objectiu d'aquesta pràctica serà fer una anàlisi sobre la possible relació entre el variables del conjunt de dades. Inicialment es farà una exploració i neteja de les dades. A continuació es realitzaran 3 anàlisis esta´distics per respondre a aquestes preguntes:
+
+* *El nivell de l'equip de futbol està relacionat amb el nombre de targetes que rep?*
+* *El nombre de xuts estan relacionats amb nombre de gols que acaben fent els equips?*
+* *El nombre de faltes comeses està relacionat amb el nombre de targetes rebudes?*
+
+Amb la primera pregunta esperem poder determinar si existeixen diferents perfils d'equips en relació al seu nivell i com reben penalitzacions.
+Amb la segona, esperem poder veure si existeixen si totes les faltes tenen la mateixa probabilitat de ser sancionades amb targeta o hi ha equips que tendeixin a fer faltes amb poc risc de targeta. 
+Amb la tercera pregunta, intentem trobar evidencies de la qualitat dels jugadors dels equips. Explorem si hi ha equips amb devanters i/o porters més determinants. 
+
+
+##Descripció del conjunt de dades
+
+Les dades estan organitzades en dos fitxers csv. El primer, results.csv, d'ells conté el resultat de cada partit sense mostrar estadsítiques del joc. Cada register correspona a un partit. Les variables que hi ha recollides són:
+
+* **home_team**: nom de l'equip que juga com a local.
+* **away_team**: nom de l'equip que juga coma  visitant.
+* **home_goals**: nombre de gols fets per l'equip local.
+* **away_goals**: nombre de gols fets per l'equip visitnat.
+* **result**: resultat del partit (categoritzat com a H: victoria per l'equip local, A: victoria per l'equip visitant, D: empat).
+* **season**: temporada, expressat numericament en XXXX-XXXX.
+
+El segon fitxer es diu stats.csv i conté els estadístiques dels equips a cada temporada. Cada registre correspon a un equip i temporada. D'entre les variables que hi ha tenim:
+
+* **team**: nom de l'equip.
+* **season**: temporada, expressat numericament en XXXX-XXXX.
+* **goals**: nombre de gols anotats per l'equip durant la temporada.
+* **total_yel_card**: nombre total de targetes grogues amb que ha estat amonestat l'equip durant la temporada.
+* **total_red_card**: nombre total de targetes vermelles amb que ha estat amonestat l'equip durant la temporada.
+* **total_scoring_att**: nombre total de xuts fets per l'equip durant la temporada.
+* **total_tackle**: nombre total de faltes/entrades comeses.
+
+##Preparació de les dades
+
+###Importació de dades
+
+Els fitxers estan disponibles per ser descarregats a l'enllça especificat a la descripció. En aquest primer pas importem les dades en R.
+```{r, echo= TRUE , include=T, results=T}
+results <- read.csv("data/results.csv", stringsAsFactors = FALSE, header = TRUE)
+stats   <- read.csv("data/stats.csv", stringsAsFactors = FALSE, header = TRUE)
+
+# Seleccionem les variables d'interès del dataset stats:
+stats   <- stats[,  c('team', 'season', 'goals', 'total_yel_card', 'total_red_card', 'total_scoring_att', 'ontarget_scoring_att', 'total_tackle')]
+
+# Mirem el nombre de registres i columnes de cada conjunt de dades
+dim(results)
+dim(stats)
+
+```
+
+Comprovem l'estructura de les nostres dades:
+```{r, echo= TRUE , include=T, results=T}
+str(results)
+str(stats)
+```
+
+###Evaluació de valors perduts i allunyats
+
+####Valors perduts
+Evaluem si hi ha valors perduts en alguna de les nostres variables d'interès. Aprofitem la funció que recorre cada columna del dataset indicat i avalua la funció indicada. Comptem el nombre de casos en que hi ha un missing (NA) a cada variable.
+```{r}
+sapply(results, function(x) sum(is.na(x)))
+sapply(stats, function(x) sum(is.na(x)))
+```
+
+Com era d'esperar no hi ha cap valor perdut. Son dades recents i fàcliment completables ja que es poden consultar.
+
+####Valors extrems
+
+Explorem si existeixen valors extrems en les nostres dades que en poguessin condicionar els analisis. Per a fer-ho, aprofitarem el boxplot. Al generar un boxplot, R, ens guarda elsvalors descriptius calculats. En podem consutlar si apareixen valors anormalment allunyats en les variables quantitatives d'interès:
+
+```{r}
+boxplot.stats(stats$goals)$out
+boxplot.stats(stats$total_yel_card)$out
+boxplot.stats(stats$total_scoring_att)$out
+boxplot.stats(stats$total_tackle)$out
+```
+
+En totes les variables trobem algun valor allunyat. Són poques les observacions, fins i tot entra dins de la normalitat, ja que d'entre més de 240 observacions, son poques les que s'allunyen de la resta. No prenem mesures de moment. Tindrem en compte aquests valors en cas que trobem anomalies en les dades.
+
+###Calcul de noves variables
+
+Per l'analisis que ens interesa, calcularem el nombre de punts obtinguts per cada equip cada temporada. D'aquesta manera, podrem calcular la seva posició final a la classificació d'aquell any. Amb la classificació crearem una nova variable que ens permetrà distingir a cada temporada els 5 millors equips i els 5 pitjors.
+
+```{r, echo=T, include=T, message=F}
+# Calculem les variables de punts
+results$home_points <- ifelse(results$result == "H", 3, 
+                              ifelse(results$result == "A", 0, 1))
+results$away_points <- ifelse(results$result == "A", 3, 
+                              ifelse(results$result == "H", 0, 1))
+
+# Unim tots els punts en un únic conjunt de dades 
+home_results <- results[, c("home_team", "season", "home_points")]
+away_results <- results[, c("away_team", "season", "away_points")]
+noms_col <- c("team", "season", "points")
+colnames(home_results) <- noms_col
+colnames(away_results) <- noms_col
+points <- rbind(home_results, away_results)
+
+# Calculem la classificació de cada temporada a partir dels punts
+classif <- points %>% group_by(team, season) %>% summarise(Points = sum(points)) %>% ungroup()
+classif <- classif[order(classif$season, -classif$Points), ]
+classif$class <- rep(1:20, 12)
+
+# Calculem els millors i els pitjors equips de cada temporada
+classif$top5bot5 <- ifelse(classif$class <= 5, "TOP5",
+                           ifelse(classif$class >= 16, "BOT5", NA))
+
+# Afegim el classificador de millors i pitjors equips de cada temporada a les dades d'estadístiques.
+stats <- left_join(stats, classif[, c("team", "season", "top5bot5")])
+
+# Nombre total de targetes rebudes
+stats$total_card <- stats$total_red_card + stats$total_yel_card
+
+```
+
+
+##Anàlisi de dades
+
+###1. Relació entre nivell de l'equip i nombre de targetes
+
+El nombre de targetes rebudes pot ser diferent en funció del nivell de l'equip. Ens plantegem les hipotesis:
+
+ + *H0 nula: el nivell de l'equip no afecta al nombre de targetes rebudes al llarg de la temporada.*
+ + *H1 alternativa: el nivell de l'equip i el nombre de tagetes rebudes durant la temporada estan relacionts.*
+
+
+```{r}
+# Distribuió de la variable
+boxplot(total_card ~ top5bot5, stats)
+# Test de normalitat
+shapiro.test(stats[which(stats$top5bot5 == 'TOP5'),  "total_card"])
+shapiro.test(stats[which(stats$top5bot5 == 'BOT5'),  "total_card"])
+# Test de homogenietat de variances
+leveneTest(stats$total_card, stats$top5bot5)
+
+```
+
+Res indica que no es compleixien els suposits de normalitat ni homogeneitat de variances. Procedim amb l'anàlisi de comparació de mitjanes:
+
+```{r}
+t.test(total_card ~ top5bot5, stats)
+```
+
+#### Resultats 1
+
+Els resultats mostren que la mitjana de targetes rebudes pels equips TOP es menor que les rebudes pels equips BOT. Els equips TOP reben de mitjana 59,6 targetes per temporada, mentre que els equips BOT en reben 66,2. Aquesta diferencia de 6,6 targetes és estadísticament significativa (t=3,71 p=0,0003). Amb una confiança del 95% aquest efecte estarà entre 3,1 i 10,1 targetes.
+
+
+###2. Nombre de xuts i nombre de gols
+
+Avaluem si el nombre de gols que es marquen està relacioat amb el nombre de xuts a porta que es fan. Ens plantegem les hipotesis:
+
+ + *H0 nula: el nombre de xuts a porta no afecta el nombre de gols marcats.*
+ + *H1 alternativa: el nombre de xuts a porta estàrelacionat amb el nombre de gols marcats.*
+
+```{r}
+# Distribuió de les variable
+boxplot(stats$goals)
+boxplot(stats$total_scoring_att)
+plot(stats$goals, stats$total_scoring_att)
+
+# Test de normalitat
+shapiro.test(stats$goals)
+shapiro.test(stats$total_scoring_att)
+qqPlot(stats$goals)
+qqPlot(stats$total_scoring_att)
+
+```
+
+El gràfic de dispersió mostra una relació força evident entre aquestes dues variables. Però les proves de normalitat, semblen indicar que hi ha cert biaix i que no podem considerar que les distribucions de les variables *goal* i *total_scoring_att* siguin normals.
+
+
+```{r}
+cor(stats$goals, stats$total_scoring_att)
+model <- glm(goals ~ total_scoring_att, data=stats)
+summary(model)
+```
+
+####Resultats 2
+
+De tota manera, observem que la seva relació és important: 0,788. Un model lineal ens indica que per a cada xut a porta, es marquen 0,13 gols més. Aquest efecte és estadísticament molt significatiu (p<0,001). El nombre de xuts a fer, per marcar un gol es de 8 ( [NNT](https://en.wikipedia.org/wiki/Number_needed_to_treat)).
+
+
+###3. Nombre de faltes comeses i targetes 
+
+Avalume si existeix relació entre el nombre de faltes comeses i el nombre de targetes rebudes per un equip. Ens plantegem les hipotesis:
+
+ + *H0 nula: el nombre de targetes rebudes no està relacionat amb el nombre de faltes rebudes.*
+ + *H1 alternativa: el nombre de targetes rebudes està relacionat amb el nombre de faltes rebudes.*
+
+```{r}
+# Distribuió de les variable
+boxplot(stats$total_tackle)
+boxplot(stats$total_card)
+plot(stats$total_tackle, stats$total_card)
+
+# Test de normalitat
+shapiro.test(stats$total_card)
+shapiro.test(stats$total_tackle)
+qqPlot(stats$total_card)
+qqPlot(stats$total_tackle)
+
+```
+
+El gràfic de dispersió no sembla mostrar cap rleació entre el nombre de targetes i el nombre de faltes. L'exploració visual de la normalitat sembla indicar normalitat, però les prova de Shapiro-Wilk es significativa per al nombre de faltes comeses. En el q-q plot podem observar que probablment es degui als valors allunyats. 
+
+```{r}
+cor(stats$total_card, stats$total_tackle)
+model <- glm(total_card ~ total_tackle, data=stats)
+summary(model)
+```
+
+####Resultats 3
+
+Tal com podiem preveure amb el gràfic de dispersió inicial. No existeix relació entre el nombre de faltes comeses i el nombre de targetes rebudes per un equp al llarg de la temporada.
+
+
+## Conclusions
+
+Pel que hem pogut veure, els millors equips reben menys targetes que els equips que acaben últims. La relació de fet seria a l'inrevés, ja que les targetes es succeeixen abans que la classificació. Rebre més targetes, o jugar de manera que es rebn més targerets, acaba situant l'equip en pitjor classificació.
+
+Els equips més ofensius que són capaços de fer més xuts a porta són els que marquen més gols. Aquesta relació sembla força evident, però es podria pensar que hi ha equips amb devanteres molt decisives o porters excepcionals. No hem trobat evidencies de que això sigui així a la Premier League. Si es xuta es marca.
+
+No s'ha trobat relació entre el nombre de targetes rebudes i el nombre de faltes comeses. Les targetes rebudes per tant, no venen determinades pel nombre de faltes que es facin. Un estil de joc més destructiu no necessariament està penalitzat amb targetes. Fins i tot els equips que tendeixen a fet menys faltes, també es poden trobar amb necessitat de fer faltes compromeses que siguin penades amb targeta. 
+
+
+```{r}
+# Exportem les dades finals
+write.csv(stats, "data/stats_final.csv")
+```
+
+
